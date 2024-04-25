@@ -23,6 +23,7 @@
 
 int ass_strcasecmp(const char *s1, const char *s2);
 int ass_strncasecmp(const char *s1, const char *s2, size_t n);
+int ass_utf16_strncasecmp(const char *s1, const char *s2, size_t n);
 
 static inline int ass_isspace(int c)
 {

@@ -73,3 +73,27 @@ int ass_strncasecmp(const char *s1, const char *s2, size_t n)
     return a - b;
 }
 
+int ass_utf16_strncasecmp(const char *s1, const char *s2, size_t n) {
+    if (n % 2) {
+        // Size must be even for UTF-16
+        return INT_MAX;
+    }
+
+    unsigned char a1, a2, b1, b2;
+    const char *last = s1 + n;
+    do {
+        a1 = (unsigned char)*s1++;
+        a2 = (unsigned char)*s1++;
+        if (!a1)
+            a2 = lowertab[a2];
+
+        b1 = (unsigned char)*s2++;
+        b2 = (unsigned char)*s2++;
+        if (!b1)
+            b2 = lowertab[b2];
+    } while (s1 < last && (a1 || a2) && a1 == b1 && a2 == b2);
+
+    return (a1 << 8 | a2) - (b1 << 8 | b2);
+}
+
+

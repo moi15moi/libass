@@ -180,8 +180,85 @@ unsigned ass_utf8_put_char(char *dest, uint32_t ch)
         *dest++ = (ch & 0x3F) | 0x80;
     }
 
-    *dest = '\0';
     return dest - orig_dest;
+}
+
+/**
+ * \brief Converts a single UTF-32 code point to UTF-16BE
+ * \param dest Buffer to write to. Writes a NULL terminator.
+ * \param ch 32-bit character code to convert
+ * \return number of bytes written
+ * converts a single character and ASSUMES YOU HAVE ENOUGH SPACE
+ */
+unsigned ass_utf16be_put_char(char *dest, uint32_t ch)
+{
+    char *orig_dest = dest;
+
+    if (ch < 0x10000) {
+        // 2 bytes
+        *dest++ = (ch >> 8) & 0xFF; // High byte
+        *dest++ = ch & 0xFF;        // Low byte
+    } else {
+        // 4 bytes
+        uint16_t high_surrogate = (ch >> 10) + 0xD7C0;
+        uint16_t low_surrogate = (ch & 0x3FF) + 0xDC00;
+        *dest++ = (high_surrogate >> 8) & 0xFF; // High byte
+        *dest++ = high_surrogate & 0xFF;        // Low byte
+        *dest++ = (low_surrogate >> 8) & 0xFF;  // High byte
+        *dest++ = low_surrogate & 0xFF;         // Low byte
+    }
+
+    return dest - orig_dest;
+}
+
+/**
+ * \brief Parse UTF-8 and return the code point of the sequence starting at src.
+ * \param src pointer to a pointer to the start of the UTF-8 data
+ *            (will be set to the start of the next code point)
+ * \return the code point
+ */
+static uint32_t ass_read_utf8(uint8_t **src, size_t bytes)
+{
+    if (bytes < 1)
+        goto too_short;
+
+    uint8_t first_byte = (*src)[0];
+    *src += 1;
+    bytes -= 1;
+
+    if (first_byte < 0x80)
+        return first_byte;
+
+    size_t num_bytes = 0;
+    if ((first_byte & 0xE0) == 0xC0)
+        num_bytes = 2;
+    else if ((first_byte & 0xF0) == 0xE0)
+        num_bytes = 3;
+    else if ((first_byte & 0xF8) == 0xF0)
+        num_bytes = 4;
+    else
+        return 0xFFFD; // Invalid UTF-8 sequence
+
+    if (bytes < num_bytes - 1)
+        goto too_short;
+
+    uint32_t cp = first_byte & (0xFF >> (num_bytes + 1));
+
+    for (size_t i = 0; i < num_bytes - 1; i++) {
+        uint8_t byte = (*src)[i];
+
+        if (byte < 0x80 || byte > 0xBF)
+            return 0xFFFD; // Invalid continuation byte
+        cp = (cp << 6) | (byte & 0x3F);
+    }
+
+    *src += num_bytes - 1;
+
+    return cp;
+
+too_short:
+    *src += bytes;
+    return 0xFFFD;
 }
 
 /**
@@ -221,6 +298,26 @@ static uint32_t ass_read_utf16be(uint8_t **src, size_t bytes)
 too_short:
     *src += bytes;
     return 0xFFFD;
+}
+
+void ass_utf8_to_utf16be(char *dst, size_t dst_size, uint8_t *src, size_t src_size)
+{
+    uint8_t *end = src + src_size;
+
+    if (!dst_size)
+        return;
+
+    while (src < end) {
+        uint32_t cp = ass_read_utf8(&src, end - src);
+        if (dst_size < 6)
+            break;
+        unsigned s = ass_utf16be_put_char(dst, cp);
+        dst += s;
+        dst_size -= s;
+    }
+
+    *dst++ = '\0';
+    *dst = '\0';
 }
 
 void ass_utf16be_to_utf8(char *dst, size_t dst_size, uint8_t *src, size_t src_size)

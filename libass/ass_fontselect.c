@@ -49,6 +49,7 @@
 
 #define ABS(x) ((x) < 0 ? -(x) : (x))
 #define MAX_FULLNAME 100
+#define LOGFONT_NAME_SIZE 64
 
 // internal font database element
 // all strings are utf-8
@@ -624,14 +625,34 @@ static bool check_postscript(ASS_FontInfo *fi)
 static bool matches_family_name(ASS_FontInfo *f, const char *family,
                                 bool match_extended_family)
 {
+    // The + 2 is to prevent buffer overflow, ensuring that the arrays have sufficient space
+    // when the last character require 4 bytes in the function ass_utf16be_put_char.
+    // Note that VSFilter will break surrogate to have exactly 64 bytes.
+    char trunc_req_family[LOGFONT_NAME_SIZE + 2];
+    char trunc_current_family[LOGFONT_NAME_SIZE + 2];
+
+    ass_utf8_to_utf16be(trunc_req_family, sizeof(trunc_req_family), (uint8_t *)family,
+                        sizeof(trunc_req_family));
+
     for (int i = 0; i < f->n_family; i++) {
-        if (ass_strcasecmp(f->families[i], family) == 0)
+        ass_utf8_to_utf16be(trunc_current_family, sizeof(trunc_current_family), (uint8_t *)f->families[i],
+                            sizeof(trunc_current_family));
+
+        // Subtracting 2 because the last 2 bytes should be considered null. It may not be the case when the last
+        // character needs 4 bytes, BUT VSFilter breaks surrogates, so we can ignore the lower surrogate.
+        if (ass_utf16_strncasecmp(trunc_current_family, trunc_req_family, LOGFONT_NAME_SIZE - 2) == 0)
             return true;
     }
+
     if (match_extended_family && f->extended_family) {
-        if (ass_strcasecmp(f->extended_family, family) == 0)
+        char trunc_extended_family[LOGFONT_NAME_SIZE + 2];
+        ass_utf8_to_utf16be(trunc_extended_family, sizeof(trunc_extended_family), (uint8_t *)f->extended_family,
+                            sizeof(trunc_extended_family));
+
+        if (ass_utf16_strncasecmp(trunc_extended_family, trunc_req_family, LOGFONT_NAME_SIZE - 2) == 0)
             return true;
     }
+
     return false;
 }
 
@@ -644,17 +665,28 @@ static bool matches_full_or_postscript_name(ASS_FontInfo *f,
 {
     bool matches_fullname = false;
     bool matches_postscript_name = false;
+    char trunc_req_fullname[LOGFONT_NAME_SIZE + 2];
+    char trunc_current_fullname[LOGFONT_NAME_SIZE + 2];
+    char trunc_postscript_name[LOGFONT_NAME_SIZE + 2];
+
+    ass_utf8_to_utf16be(trunc_req_fullname, sizeof(trunc_req_fullname), (uint8_t *)fullname,
+                        sizeof(trunc_req_fullname));
 
     for (int i = 0; i < f->n_fullname; i++) {
-        if (ass_strcasecmp(f->fullnames[i], fullname) == 0) {
+        ass_utf8_to_utf16be(trunc_current_fullname, sizeof(trunc_current_fullname), (uint8_t *)f->fullnames[i],
+                            sizeof(trunc_current_fullname));
+
+        if (ass_utf16_strncasecmp(trunc_current_fullname, trunc_req_fullname, LOGFONT_NAME_SIZE - 2) == 0) {
             matches_fullname = true;
             break;
         }
     }
 
-    if (f->postscript_name != NULL &&
-        ass_strcasecmp(f->postscript_name, fullname) == 0)
-        matches_postscript_name = true;
+    if (f->postscript_name != NULL) {
+        ass_utf8_to_utf16be(trunc_postscript_name, sizeof(trunc_postscript_name), (uint8_t *)f->postscript_name,
+                            sizeof(trunc_postscript_name));
+        matches_postscript_name = ass_utf16_strncasecmp(trunc_postscript_name, trunc_req_fullname, LOGFONT_NAME_SIZE - 2) == 0;
+    }
 
     if (matches_fullname == matches_postscript_name)
         return matches_fullname;
