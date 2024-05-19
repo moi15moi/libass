@@ -80,6 +80,18 @@ struct font_info {
 
     // unused if the provider has a check_postscript function
     bool is_postscript;
+
+    /**
+     * Equivalent of LOGFONT.lfPitchAndFamily.
+     * Bits 0-3 describe the pitch, and bits 4-7 describe the family.
+     */
+    uint8_t pitch_and_family;
+
+    /**
+     * Equivalent of LOGFONT.lfCharSet.
+     */
+    int supported_charsets[ASS_CHARACTER_SET_SIZE - 1]; // -1 to exclude the DEFAULT_CHARSET
+    int n_supported_charset;
 };
 
 struct font_selector {
@@ -242,6 +254,8 @@ static void ass_font_provider_free_fontinfo(ASS_FontInfo *info)
 /**
  * \brief Read basic metadata (names, weight, slant) from a FreeType face,
  * as required for the FontSelector for matching and sorting.
+ * \note Before calling this method, ensure that ass_charmap_magic
+ * has been called to set up the appropriate charmap.
  * \param lib FreeType library
  * \param face FreeType face
  * \param fallback_family_name family name from outside source, used as last resort
@@ -253,6 +267,11 @@ get_font_info(FT_Library lib, FT_Face face, const char *fallback_family_name,
               ASS_FontProviderMetaData *info)
 {
     int i;
+    uint8_t guessed_charset = 0;
+    FT_Byte panose[10];
+    uint8_t pitch_and_family;
+    size_t num_supported_charset = 0;
+    
     int num_fullname = 0;
     int num_family   = 0;
     int num_names = FT_Get_Sfnt_Name_Count(face);
@@ -329,6 +348,22 @@ get_font_info(FT_Library lib, FT_Face face, const char *fallback_family_name,
         memcpy(info->fullnames, &fullnames, sizeof(char *) * num_fullname);
         info->n_fullname = num_fullname;
     }
+
+    if (info->is_postscript && ass_face_has_os2_version_1_or_higher(face)) {
+        num_supported_charset = ass_face_get_charsets_postscript(face, info->supported_charsets);
+        
+        pitch_and_family = ass_face_get_pitch_postscript(face);
+        pitch_and_family |= ass_face_get_family_postscript(face);
+    } else {
+        ass_face_set_panose(face, info->style_flags, panose);   
+        num_supported_charset = ass_face_get_charsets_truetype(face, &guessed_charset, panose, info->supported_charsets);
+        
+        pitch_and_family = ass_face_get_pitch_truetype(face, guessed_charset, panose, info->supported_charsets, num_supported_charset);
+        pitch_and_family |= ass_face_get_family_truetype(guessed_charset, panose);
+    }
+    info->n_supported_charset = num_supported_charset;
+    info->pitch_and_family = pitch_and_family;
+
 
     return true;
 
@@ -409,6 +444,9 @@ ass_font_provider_add_font(ASS_FontProvider *provider,
         }
         if (!face)
             goto error;
+        
+        ass_charmap_magic(selector->library, face);
+
         if (!get_font_info(selector->ftlibrary, face, meta->extended_family,
                            &implicit_meta)) {
             FT_Done_Face(face);
@@ -458,11 +496,13 @@ ass_font_provider_add_font(ASS_FontProvider *provider,
     // set uid
     info->uid = selector->uid++;
 
-    info->style_flags   = meta->style_flags;
-    info->weight        = meta->weight;
-    info->n_fullname    = meta->n_fullname;
-    info->n_family      = meta->n_family;
-    info->is_postscript = meta->is_postscript;
+    info->style_flags         = meta->style_flags;
+    info->weight              = meta->weight;
+    info->n_fullname          = meta->n_fullname;
+    info->n_family            = meta->n_family;
+    info->is_postscript       = meta->is_postscript;
+    info->pitch_and_family    = meta->pitch_and_family;
+    info->n_supported_charset = meta->n_supported_charset;
 
     info->families = calloc(meta->n_family, sizeof(char *));
     if (info->families == NULL)
@@ -484,6 +524,10 @@ ass_font_provider_add_font(ASS_FontProvider *provider,
         info->fullnames[i] = strdup(meta->fullnames[i]);
         if (info->fullnames[i] == NULL)
             goto error;
+    }
+
+    for (i = 0; i < info->n_supported_charset; i++) {
+        info->supported_charsets[i] = meta->supported_charsets[i];
     }
 
     if (meta->postscript_name) {
@@ -671,6 +715,37 @@ static unsigned font_attributes_similarity(ASS_FontInfo *a, ASS_FontInfo *req)
     // Assign score for weight mismatch
     score += (73 * ABS(a_weight - req->weight)) / 256;
 
+    uint8_t a_family = a->pitch_and_family & ((ASS_FF_DONTCARE | ASS_FF_ROMAN | ASS_FF_SWISS | ASS_FF_MODERN | ASS_FF_SCRIPT | ASS_FF_DECORATIVE)); 
+    uint8_t req_family = ASS_FF_DONTCARE;
+
+    uint8_t req_charset = ASS_DEFAULT_CHARSET;
+    if (req->n_supported_charset > 0)
+        req_charset = req->supported_charsets[0];
+
+    if (req_charset != ASS_SYMBOL_CHARSET) {
+        if (a_family != ASS_FF_DONTCARE)
+            // GDI has a special case.
+            // If the requested font is "Tms Rmn", it would be FF_ROMAN.
+            a_family = ASS_FF_SWISS;
+        
+        if (a_family != req_family) {
+            if (a_family == ASS_FF_DONTCARE)
+                score += 8000;
+            else {
+                if ((req_family <= ASS_FF_MODERN) && (a_family > ASS_FF_MODERN))
+                    score += 50;
+                score += 9000;
+            }
+        }
+    }
+
+    if (a->pitch_and_family & ASS_FIXED_PITCH) {
+        score += 1;
+    }
+
+    // TODO: Check the charset.
+    // GDI add a score of 65000 if the font doesn't support the charset.
+
     return score;
 }
 
@@ -711,7 +786,7 @@ static bool check_glyph(ASS_FontInfo *fi, uint32_t code)
 static char *
 find_font(ASS_FontSelector *priv,
           ASS_FontProviderMetaData meta, bool match_extended_family,
-          unsigned bold, unsigned italic,
+          unsigned bold, unsigned italic, int charset,
           int *index, char **postscript_name, int *uid, ASS_FontStream *stream,
           uint32_t code, bool *name_match)
 {
@@ -723,8 +798,10 @@ find_font(ASS_FontSelector *priv,
         return NULL;
 
     // fill font request
-    req.style_flags = (italic ? FT_STYLE_FLAG_ITALIC : 0);
-    req.weight      = bold;
+    req.style_flags           = (italic ? FT_STYLE_FLAG_ITALIC : 0);
+    req.weight                = bold;
+    req.n_supported_charset   = 1;
+    req.supported_charsets[0] = charset;
 
     // Match font family name against font list
     unsigned score_min = UINT_MAX;
@@ -814,7 +891,7 @@ find_font(ASS_FontSelector *priv,
 
 static char *select_font(ASS_FontSelector *priv,
                          const char *family, bool match_extended_family,
-                         unsigned bold, unsigned italic,
+                         unsigned bold, unsigned italic, int charset,
                          int *index, char **postscript_name, int *uid,
                          ASS_FontStream *stream, uint32_t code)
 {
@@ -843,7 +920,7 @@ static char *select_font(ASS_FontSelector *priv,
     }
 
     result = find_font(priv, meta, match_extended_family,
-                       bold, italic, index, postscript_name, uid,
+                       bold, italic, charset, index, postscript_name, uid,
                        stream, code, &name_match);
 
     // If no matching font was found, it might not exist in the font list
@@ -859,7 +936,7 @@ static char *select_font(ASS_FontSelector *priv,
                                                 meta.fullnames[i]);
         }
         result = find_font(priv, meta, match_extended_family,
-                           bold, italic, index, postscript_name, uid,
+                           bold, italic, charset, index, postscript_name, uid,
                            stream, code, &name_match);
     }
 
@@ -892,15 +969,16 @@ char *ass_font_select(ASS_FontSelector *priv,
     const char *family = font->desc.family.str;  // always zero-terminated
     unsigned bold = font->desc.bold;
     unsigned italic = font->desc.italic;
+    int charset = font->desc.charset;
     ASS_FontProvider *default_provider = priv->default_provider;
 
     if (family && *family)
-        res = select_font(priv, family, false, bold, italic, index,
+        res = select_font(priv, family, false, bold, italic, charset, index,
                 postscript_name, uid, data, code);
 
     if (!res && priv->family_default) {
         res = select_font(priv, priv->family_default, false, bold,
-                italic, index, postscript_name, uid, data, code);
+                italic, charset, index, postscript_name, uid, data, code);
         if (res)
             ass_msg(priv->library, MSGL_WARN, "fontselect: Using default "
                     "font family: (%s, %d, %d) -> %s, %d, %s",
@@ -917,7 +995,7 @@ char *ass_font_select(ASS_FontSelector *priv,
 
         if (fallback_family) {
             res = select_font(priv, fallback_family, true, bold, italic,
-                    index, postscript_name, uid, data, code);
+                    index, ASS_DEFAULT_CHARSET, postscript_name, uid, data, code);
             free(fallback_family);
         }
     }

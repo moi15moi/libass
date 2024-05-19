@@ -214,6 +214,18 @@ struct ass_font_provider_meta_data {
      * Unused if the font provider has a check_postscript function.
      */
     bool is_postscript;
+
+    /**
+     * Equivalent of LOGFONT.lfPitchAndFamily.
+     * Bits 0-3 describe the pitch, and bits 4-7 describe the family.
+     */
+    uint8_t pitch_and_family;
+
+    /**
+     * Equivalent of LOGFONT.lfCharSet.
+     */
+    int supported_charsets[ASS_CHARACTER_SET_SIZE - 1]; // -1 to exclude the DEFAULT_CHARSET
+    int n_supported_charset;
 };
 
 struct ass_font_stream {

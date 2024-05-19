@@ -497,6 +497,7 @@ size_t ass_font_construct(void *key, void *value, void *priv)
     font->desc.family = desc->family;
     font->desc.bold = desc->bold;
     font->desc.italic = desc->italic;
+    font->desc.charset = desc->charset;
     font->desc.vertical = desc->vertical;
 
     int error = add_face(render_priv->fontselect, font, 0);
@@ -567,6 +568,18 @@ static FT_Long fsSelection_to_style_flags(uint16_t fsSelection)
     return ret;
 }
 
+static FT_Long macStyle_to_style_flags(uint16_t macStyle)
+{
+    FT_Long ret = 0;
+
+    if (macStyle & (1 << 1))
+        ret |= FT_STYLE_FLAG_ITALIC;
+    if (macStyle & (1 << 0))
+        ret |= FT_STYLE_FLAG_BOLD;
+
+    return ret;
+}
+
 FT_Long ass_face_get_style_flags(FT_Face face)
 {
     // If we have an OS/2 table, compute this ourselves, since FreeType
@@ -575,7 +588,570 @@ FT_Long ass_face_get_style_flags(FT_Face face)
     if (os2)
         return fsSelection_to_style_flags(os2->fsSelection);
 
+    TT_Header *head = FT_Get_Sfnt_Table(face, FT_SFNT_HEAD);
+    if (head)
+        return macStyle_to_style_flags(head->Mac_Style);
+
     return face->style_flags;
+}
+
+/**
+ * \brief Is the charset is from a Double-Byte Character Set
+ **/
+bool ass_face_is_charset_dbcs(int charset)
+{
+    return (charset == ASS_SHIFTJIS_CHARSET ||
+        charset == ASS_HANGUL_CHARSET ||
+        charset == ASS_CHINESEBIG5_CHARSET ||
+        charset == ASS_GB2312_CHARSET);
+}
+/**
+ * \brief Is the charset is from a Double-Byte Character Set
+ **/
+bool ass_face_is_any_charset_dbcs(int *supported_charsets, size_t num_supported_charset, ASS_CharacterSet guessed_charset) {
+
+    if (ass_face_is_charset_dbcs(guessed_charset))
+        return true;
+
+    for (size_t i = 0; i < num_supported_charset; i++) {
+        if (ass_face_is_charset_dbcs(supported_charsets[i]))
+            return true;
+    }
+    return false;    
+}
+
+bool ass_face_has_japanese_signature(FT_Face face, FT_ULong ulCodePageRange1)
+{
+    // GDI also has a special case if the flag ASS_FS_CHINESESIMP is set in ulCodePageRange1 and
+    // the unique face name is one of these names:
+    // - Microsoft:MS Mincho:1995
+    // - Microsoft:MS PMincho:1995
+    // - Microsoft:MS Gothic:1995
+    // - Microsoft:MS PGothic:1995
+    return (
+        !(ulCodePageRange1 & ASS_FS_JISJAPAN) &&
+        face->charmap->platform_id == TT_PLATFORM_MICROSOFT &&
+        face->charmap->encoding_id == TT_MS_ID_SJIS &&
+        ass_font_index_magic(face, HALFWIDTH_KATAKANA_LETTER_A) &&
+        ass_font_index_magic(face, HALFWIDTH_KATAKANA_LETTER_I) &&
+        ass_font_index_magic(face, HALFWIDTH_KATAKANA_LETTER_U) &&
+        ass_font_index_magic(face, HALFWIDTH_KATAKANA_LETTER_E) &&
+        ass_font_index_magic(face, HALFWIDTH_KATAKANA_LETTER_O)
+    );
+}
+
+ASS_CmapType ass_face_get_cmap_type(FT_Face face)
+{
+    size_t cmap_type = ASS_CMAP_UNKNOWN;
+    FT_Long cmap_format = FT_Get_CMap_Format(face->charmap);
+    TT_OS2 *os2;
+    TT_Postscript *post;
+
+    if (face->charmap->platform_id == TT_PLATFORM_MICROSOFT) {
+        if (cmap_format == 4) {
+            if (face->charmap->encoding_id == TT_MS_ID_SJIS ||
+                face->charmap->encoding_id == TT_MS_ID_PRC ||
+                face->charmap->encoding_id == TT_MS_ID_BIG_5 ||
+                face->charmap->encoding_id == TT_MS_ID_WANSUNG) {
+                cmap_type = ASS_CMAP_NOT_UNICODE;
+            } else {
+                cmap_type = ASS_CMAP_UNICODE;
+            }
+        } else if (cmap_format == 2) {
+            if (face->charmap->encoding_id == TT_MS_ID_SJIS ||
+                face->charmap->encoding_id == TT_MS_ID_PRC ||
+                face->charmap->encoding_id == TT_MS_ID_BIG_5 ||
+                face->charmap->encoding_id == TT_MS_ID_WANSUNG)
+                cmap_type = ASS_CMAP_HIGH_BYTE;
+        }
+        
+        if (cmap_type == ASS_CMAP_UNKNOWN)
+            return cmap_type;
+
+        if (face->charmap->encoding_id == TT_MS_ID_SYMBOL_CS) {
+            os2 = FT_Get_Sfnt_Table(face, FT_SFNT_OS2);
+
+            if (os2) {
+                if (os2->fsSelection & 0xFF == ASS_ANSI_CHARSET &&
+                    os2->panose[ASS_bFamilyType] == ASS_PAN_FAMILY_PICTORIAL)
+                    cmap_type = ASS_CMAP_SYMBOL;
+            }
+        }
+
+        // When the platform enc id is 0 or 1, GDI actually do some check to see if the font is a symbol
+        // or if it is a old BiDi font
+    }
+
+    if (face->charmap->platform_id == TT_PLATFORM_MACINTOSH &&
+        face->charmap->encoding_id == TT_MAC_ID_ROMAN &&
+        cmap_format == 0) {
+        post = FT_Get_Sfnt_Table(face, FT_SFNT_POST);
+
+        // 0x20000 means version 2.0
+        if (post->FormatType == 0x20000) {
+            // GDI performs a check with the index of the glyph name available in the post table,
+            // but since FreeType reorders the glyph indices,
+            // it isn't possible to make this check without manually parsing
+            // the post table with FT_Load_Sfnt_Table.
+            // TODO: Parse the post table manually to perform this check.
+            cmap_type = ASS_CMAP_MAC_ROMAN;
+        } else {
+            cmap_type = ASS_CMAP_WIN_ANSI;
+        }
+    }
+
+    return cmap_type;   
+}
+
+/**
+ * \note  Be sure that the panose array has a length of at least 10 bytes.
+ * \brief Sets the Panose data.
+ **/
+void ass_face_set_panose(FT_Face face, FT_Long style_flags, FT_Byte *panose) {
+    TT_OS2 *os2 = FT_Get_Sfnt_Table(face, FT_SFNT_OS2);
+    if (os2) {
+        memcpy(panose, os2->panose, 10 * sizeof(FT_Byte));
+        return;
+    }
+
+    bool is_fixed_pitch = false;
+    TT_Postscript *post = FT_Get_Sfnt_Table(face, FT_SFNT_POST);
+    if (post)
+        is_fixed_pitch = !!post->isFixedPitch;
+    memset(panose, 0, 10 * sizeof(FT_Byte));
+    panose[ASS_bFamilyType] = ASS_PAN_FAMILY_TEXT_DISPLAY;
+    panose[ASS_bWeight] = (style_flags & FT_STYLE_FLAG_BOLD) ? ASS_PAN_WEIGHT_BOLD : ASS_PAN_WEIGHT_BOOK;
+    panose[ASS_bProportion] = is_fixed_pitch ? ASS_PAN_PROP_MONOSPACED : ASS_PAN_ANY;
+}
+
+bool ass_face_has_os2_version_1_or_higher(FT_Face face) {
+    TT_OS2 *os2 = FT_Get_Sfnt_Table(face, FT_SFNT_OS2);
+    if (os2)
+        return !!os2->version;
+    return false;
+}
+
+size_t ass_face_set_charsets_from_ulCodePageRange1(FT_ULong ulCodePageRange1, enum ASS_CharacterSet *supported_charsets,
+                                                   bool is_postscript) {
+    size_t num_charsets = 0;
+
+    if (ulCodePageRange1 & ASS_FS_LATIN1) 
+        supported_charsets[num_charsets++] = ASS_ANSI_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_LATIN2) 
+        supported_charsets[num_charsets++] = ASS_EASTEUROPE_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_CYRILLIC) 
+        supported_charsets[num_charsets++] = ASS_RUSSIAN_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_GREEK) 
+        supported_charsets[num_charsets++] = ASS_GREEK_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_TURKISH) 
+        supported_charsets[num_charsets++] = ASS_TURKISH_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_HEBREW) 
+        supported_charsets[num_charsets++] = ASS_HEBREW_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_ARABIC) 
+        supported_charsets[num_charsets++] = ASS_ARABIC_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_BALTIC) 
+        supported_charsets[num_charsets++] = ASS_BALTIC_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_VIETNAMESE) 
+        supported_charsets[num_charsets++] = ASS_VIETNAMESE_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_THAI) 
+        supported_charsets[num_charsets++] = ASS_THAI_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_JISJAPAN) 
+        supported_charsets[num_charsets++] = ASS_SHIFTJIS_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_CHINESESIMP) 
+        supported_charsets[num_charsets++] = ASS_GB2312_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_WANSUNG) 
+        supported_charsets[num_charsets++] = ASS_HANGUL_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_CHINESETRAD) 
+        supported_charsets[num_charsets++] = ASS_CHINESEBIG5_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_JOHAB) 
+        supported_charsets[num_charsets++] = ASS_JOHAB_CHARSET;
+    if (ulCodePageRange1 & ASS_FS_SYMBOL)
+        supported_charsets[num_charsets++] = ASS_SYMBOL_CHARSET;
+    if (is_postscript && (ulCodePageRange1 & ASS_FS_MAC))
+        supported_charsets[num_charsets++] = ASS_MAC_CHARSET;
+
+    return num_charsets;
+}
+
+ASS_CharacterSet ass_face_get_guessed_charset(FT_Face face, FT_Byte* panose)
+{
+    if (!panose)
+        return ASS_DEFAULT_CHARSET;
+
+    TT_OS2 *os2 = FT_Get_Sfnt_Table(face, FT_SFNT_OS2);
+    size_t cmap_type = ass_face_get_cmap_type(face);
+
+    
+    uint8_t charset_from_fsSelection = 0;
+    if (os2)
+        // For old font
+        charset_from_fsSelection = os2->fsSelection >> 8;
+    uint8_t guessed_charset = ASS_ANSI_CHARSET;
+
+    if (
+        os2 &&
+        os2->version > 0 &&
+        os2->ulCodePageRange1 &&
+        !ass_face_has_japanese_signature(face, os2->ulCodePageRange1)
+    ) {
+        FT_ULong ulCodePageRange1 = os2->ulCodePageRange1;
+
+        if (ulCodePageRange1 & ( ASS_FS_JISJAPAN | ASS_FS_CHINESETRAD | ASS_FS_CHINESESIMP | ASS_FS_WANSUNG)) {
+            // GDI also calls [GetACP](https://learn.microsoft.com/en-us/windows/win32/api/winnls/nf-winnls-getacp),
+            // translate the ANSI code page to a charset and it compare it to ulCodePageRange1
+            if (ulCodePageRange1 & ASS_FS_JISJAPAN)
+                guessed_charset = ASS_SHIFTJIS_CHARSET ;                   
+            else if (ulCodePageRange1 & ASS_FS_CHINESETRAD)
+                guessed_charset = ASS_CHINESEBIG5_CHARSET;
+            else if (ulCodePageRange1 & ASS_FS_CHINESESIMP)
+                guessed_charset = ASS_GB2312_CHARSET;
+            else
+                guessed_charset = ASS_HANGUL_CHARSET;
+        } else {
+            guessed_charset = charset_from_fsSelection;
+
+            if (
+                !charset_from_fsSelection &&
+                panose[ASS_bFamilyType] == ASS_PAN_FAMILY_PICTORIAL &&
+                cmap_type == ASS_CMAP_SYMBOL
+            )
+                guessed_charset = ASS_SYMBOL_CHARSET;
+        }
+    } else {
+        if (cmap_type == ASS_CMAP_HIGH_BYTE) {
+            if (face->charmap->encoding_id == TT_MS_ID_SJIS)
+                guessed_charset = ASS_SHIFTJIS_CHARSET;
+            else if (face->charmap->encoding_id == TT_MS_ID_PRC)
+                guessed_charset = ASS_GB2312_CHARSET;
+            else if (face->charmap->encoding_id == TT_MS_ID_BIG_5)
+                guessed_charset = ASS_CHINESEBIG5_CHARSET;
+            else if (face->charmap->encoding_id == TT_MS_ID_WANSUNG)
+                guessed_charset = ASS_HANGUL_CHARSET;
+            else
+                guessed_charset = ASS_ANSI_CHARSET;
+        } else if (
+            ass_font_index_magic(face, HALFWIDTH_KATAKANA_LETTER_A) &&
+            ass_font_index_magic(face, HALFWIDTH_KATAKANA_LETTER_I) &&
+            ass_font_index_magic(face, HALFWIDTH_KATAKANA_LETTER_U) &&
+            ass_font_index_magic(face, HALFWIDTH_KATAKANA_LETTER_E) &&
+            ass_font_index_magic(face, HALFWIDTH_KATAKANA_LETTER_O)
+        ) {
+            guessed_charset = ASS_SHIFTJIS_CHARSET;
+        } else if (
+            ass_font_index_magic(face, CJK_UNIFIED_IDEOGRAPH_61D4) &&
+            ass_font_index_magic(face, CJK_UNIFIED_IDEOGRAPH_9EE2)
+        ) {
+            guessed_charset = ASS_GB2312_CHARSET;
+        } else if (
+            ass_font_index_magic(face, CJK_UNIFIED_IDEOGRAPH_9F79) &&
+            ass_font_index_magic(face, CJK_UNIFIED_IDEOGRAPH_9F98)
+        ) {
+            guessed_charset = ASS_CHINESEBIG5_CHARSET;
+        } else if (
+            ass_font_index_magic(face, HANGUL_SYLLABLE_GA) &&
+            ass_font_index_magic(face, HANGUL_SYLLABLE_HA)
+        ) {
+            guessed_charset = ASS_HANGUL_CHARSET;
+        } else if (
+            ass_font_index_magic(face, PRIVATE_USE_AREA_E000) &&
+            (face->charmap->platform_id == TT_PLATFORM_MICROSOFT &&
+            face->charmap->encoding_id >= TT_MS_ID_SJIS &&
+            face->charmap->encoding_id <= TT_MS_ID_JOHAB)
+
+        ) {
+            // If a font has the char PRIVATE_USE_AREA_E000 and [GetACP](https://learn.microsoft.com/en-us/windows/win32/api/winnls/nf-winnls-getacp)
+            // return 932, 936, 949, 950 or 1361, it will set the guessed_charset to the correponding charset.
+            // Since it depend on the user environnement, we simply fallback on the cmap encoding id.
+            if (face->charmap->encoding_id == TT_MS_ID_SJIS)
+                guessed_charset = ASS_SHIFTJIS_CHARSET;
+            else if (face->charmap->encoding_id == TT_MS_ID_PRC)
+                guessed_charset = ASS_GB2312_CHARSET;
+            else if (face->charmap->encoding_id == TT_MS_ID_BIG_5)
+                guessed_charset = ASS_CHINESEBIG5_CHARSET;
+            else if (face->charmap->encoding_id == TT_MS_ID_WANSUNG)
+                guessed_charset = ASS_HANGUL_CHARSET;
+            else
+                guessed_charset = ASS_JOHAB_CHARSET;
+        } else {
+            guessed_charset = charset_from_fsSelection;
+
+            if (
+                !charset_from_fsSelection &&
+                panose[ASS_bFamilyType] == ASS_PAN_FAMILY_PICTORIAL &&
+                cmap_type == ASS_CMAP_SYMBOL
+            )
+                guessed_charset = ASS_SYMBOL_CHARSET;
+        }
+    }
+
+
+    if (os2 && face->charmap->platform_id == TT_PLATFORM_MICROSOFT) {
+            const size_t LAST_CHAR = 255;
+
+            if (os2->usFirstCharIndex > LAST_CHAR && os2->usLastCharIndex > LAST_CHAR)
+                guessed_charset = ASS_SYMBOL_CHARSET;
+    }
+
+    return guessed_charset;
+}
+
+/**
+ * \note  Always call ass_face_has_os2_version_1_or_higher before this method.
+ * \brief Get the supported charset for a postscript font.
+ **/
+size_t ass_face_get_charsets_postscript(FT_Face face, ASS_CharacterSet *supported_charsets)
+{
+    size_t num_charsets = 0;
+    TT_OS2 *os2 = FT_Get_Sfnt_Table(face, FT_SFNT_OS2);
+
+    if (!os2)
+        // os2 should never be null (see note).
+        return num_charsets;
+
+    num_charsets = ass_face_set_charsets_from_ulCodePageRange1(os2->ulCodePageRange1, supported_charsets, true);
+    // TODO see if it is a good idea
+    if (!num_charsets)
+        supported_charsets[num_charsets++] = ASS_DEFAULT_CHARSET;
+
+    return num_charsets;    
+}
+
+/**
+ * \note  Always call ass_face_has_os2_version_1_or_higher before this method.
+ * \brief Get the supported charset for a truetype font.
+ **/
+size_t ass_face_get_charsets_truetype(FT_Face face, int *guessed_charset,
+                                      FT_Byte* panose, int *supported_charsets) {
+    size_t num_charsets = 0;
+    *guessed_charset = ass_face_get_guessed_charset(face, panose);
+
+    bool is_charset_dbcs = ass_face_is_charset_dbcs(guessed_charset, false);
+
+    TT_OS2 *os2 = FT_Get_Sfnt_Table(face, FT_SFNT_OS2);
+    uint16_t usFirstCharIndex = os2 ? os2->usFirstCharIndex : 0;
+    uint16_t fsSelection = os2 ? os2->fsSelection : 0;
+
+    if (
+        is_charset_dbcs &&
+        os2 &&
+        (
+            os2->version == 0 ||
+            ass_face_has_japanese_signature(face, os2->ulCodePageRange1)
+        )
+    ) {
+        supported_charsets[num_charsets++] = *guessed_charset;
+    } else if (os2 && os2->version > 0) {
+        // If the ulCodePageRange1 contain FS_HEBREW, FS_ARABIC or FS_THAI
+        // and the system charset isn't HEBREW_CHARSET, ARABIC_CHARSET or THAI_CHARSET
+        // it will also add the system charset into supported_charsets.
+        num_charsets = ass_face_set_charsets_from_ulCodePageRange1(os2->ulCodePageRange1, supported_charsets, false);
+ 
+        bool supported_charsets_include_guessed_charset = false;
+        for (size_t i = 0; i < num_charsets; i++) {
+            if (supported_charsets[i] == *guessed_charset) {
+                supported_charsets_include_guessed_charset = true;
+                break;
+            }
+        }
+
+        // TODO see if usefull
+        if (!supported_charsets_include_guessed_charset) {
+            if (num_charsets)
+                *guessed_charset = supported_charsets[0];
+            else
+                *guessed_charset = ASS_DEFAULT_CHARSET;
+        }
+
+        // GDI also compare the ulCodePageRange2 to the result of [GetOEMCP](https://learn.microsoft.com/en-us/windows/win32/api/winnls/nf-winnls-getoemcp)
+        // To compare them, if GetOEMCP return 437 and the bit 0 is set, it will add OEM_CHARSET to supported_charsets
+        // Here is the corresponding list of bit versus GetOEMCP
+        // Bit setted : GetOEMCP's result
+        //           0: 437
+        //           1: 850
+        //           2: 708
+        //           3: 737
+        //           4: 775
+        //           5: 852
+        //           6: 855
+        //           7: 857
+        //           8: 860
+        //           9: 861
+        //          10: 862
+        //          11: 863
+        //          12: 864
+        //          13: 865
+        //          14: 866
+        //          15: 869
+    } else if (panose[ASS_bFamilyType] != ASS_PAN_FAMILY_PICTORIAL && usFirstCharIndex < 0x0100) {
+        // GDI seems to do something if the cmap can be null,
+        // but I don't understand in which circumstance it can be null.
+
+        if (fsSelection & 0xFF00) {
+
+            uint8_t charset_from_fsSelection = ((fsSelection >> 8) & 0xFF);
+            switch (charset_from_fsSelection) {
+                case 0xB2:
+                case 0xB3:
+                case 0xB4:
+                    // Actually, if the EngLpkInstalled is NOT installed
+                    // it will set the guessed_charset to SYMBOL_CHARSET.
+                    *guessed_charset = ASS_ARABIC_CHARSET;
+                    // TODO see if usefull
+
+                    break;
+                default:
+                    supported_charsets[num_charsets++] = charset_from_fsSelection;
+                    break;
+            }
+        } else {
+            supported_charsets[num_charsets++] = ASS_ANSI_CHARSET;
+
+            if (ass_font_index_magic(face, INCREMENT))
+                supported_charsets[num_charsets++] = ASS_MAC_CHARSET;
+
+            if (ass_font_index_magic(face, GREEK_CAPITAL_LETTER_OMEGA) ||
+                ass_font_index_magic(face, GREEK_SMALL_LETTER_UPSILON_WITH_DIALYTIKA))
+                supported_charsets[num_charsets++] = ASS_GREEK_CHARSET;
+
+            if (ass_font_index_magic(face, LATIN_CAPITAL_LETTER_I_WITH_DOT_ABOVE))
+                supported_charsets[num_charsets++] = ASS_TURKISH_CHARSET;
+
+            if (ass_font_index_magic(face, HEBREW_LETTER_ALEF))
+                supported_charsets[num_charsets++] = ASS_HEBREW_CHARSET;
+
+            if (ass_font_index_magic(face, CYRILLIC_SMALL_LETTER_IO) ||
+                ass_font_index_magic(face, CYRILLIC_CAPITAL_LETTER_YA))
+                supported_charsets[num_charsets++] = ASS_RUSSIAN_CHARSET;
+            
+            if (ass_font_index_magic(face, LATIN_SMALL_LETTER_N_WITH_CARON) ||
+                ass_font_index_magic(face, LATIN_CAPITAL_LETTER_C_WITH_CARON))
+                supported_charsets[num_charsets++] = ASS_EASTEUROPE_CHARSET;
+
+            if (ass_font_index_magic(face, LATIN_SMALL_LETTER_U_WITH_OGONEK))
+                supported_charsets[num_charsets++] = ASS_BALTIC_CHARSET;
+
+            if (ass_font_index_magic(face, MEDIUM_SHADE))
+                supported_charsets[num_charsets++] = ASS_OEM_CHARSET;
+        }
+    } else if (usFirstCharIndex >= 0xF000 && (fsSelection & 0xFF00)) {
+            uint8_t charset_from_fsselection = ((fsSelection >> 8) & 0xFF);
+            switch (charset_from_fsselection) {
+                case 0xB1:           
+                case 0xB5:
+                    supported_charsets[num_charsets++] = *guessed_charset = ASS_HEBREW_CHARSET;
+                    break;
+                case 0xB2:            
+                case 0xB3:
+                case 0xB4:
+                    supported_charsets[num_charsets++] = *guessed_charset = ASS_ARABIC_CHARSET;
+                    break;
+            }
+    } else {
+        supported_charsets[num_charsets++] = *guessed_charset;
+    }
+
+    if (is_charset_dbcs && supported_charsets < 16)
+        supported_charsets[num_charsets++] = ASS_FEOEM_CHARSET;
+    
+    // TODO see if it is a good idea
+    if (!num_charsets)
+        supported_charsets[num_charsets++] = *guessed_charset;
+
+    return num_charsets;
+}
+
+/**
+ * \note  Always call ass_face_has_os2_version_1_or_higher before this method.
+ * \brief Get the ASS_Pitch for postscript font.
+ **/
+ASS_Pitch ass_face_get_pitch_postscript(FT_Face face)
+{
+    TT_OS2 *os2 = FT_Get_Sfnt_Table(face, FT_SFNT_OS2);
+    if (os2)
+        return os2->panose[ASS_bProportion] == ASS_PAN_PROP_MONOSPACED ? ASS_FIXED_PITCH : ASS_VARIABLE_PITCH;
+    
+    // os2 should never be null (see note),
+    // but if it happens, fallback to ASS_VARIABLE_PITCH.
+    return ASS_VARIABLE_PITCH;
+}
+
+/**
+ * \brief Get the ASS_Pitch for truetype font.
+ **/
+ASS_Pitch ass_face_get_pitch_truetype(FT_Face face, int guessed_charset,
+                                      FT_Byte* panose, int *supported_charsets,
+                                      size_t num_supported_charset) {
+    bool is_fixed_pitch = false;
+
+    TT_Postscript *post = FT_Get_Sfnt_Table(face, FT_SFNT_POST);
+    if (post)
+        is_fixed_pitch = !!post->isFixedPitch;
+
+    if (
+        (
+            ass_face_is_any_charset_dbcs(supported_charsets, num_supported_charset, true) ||
+            (
+                guessed_charset == ASS_SHIFTJIS_CHARSET ||
+                guessed_charset == ASS_HANGUL_CHARSET
+            )
+        ) &&
+        panose[ASS_bProportion] == ASS_PAN_PROP_MONOSPACED
+    )
+        is_fixed_pitch = true;
+
+    return is_fixed_pitch ? ASS_FIXED_PITCH : ASS_VARIABLE_PITCH;
+}
+
+/**
+ * \note  Always call ass_face_has_os2_version_1_or_higher before this method.
+ * \brief Get the ASS_Family for postscript font.
+ **/
+ASS_Family ass_face_get_family_postscript(FT_Face face)
+{
+    ASS_Family family = ASS_FF_MODERN;
+    TT_OS2 *os2 = FT_Get_Sfnt_Table(face, FT_SFNT_OS2);
+
+    if (!os2)
+        // os2 should never be null (see note).
+        return family;
+
+    if (os2->panose[ASS_bFamilyType] == ASS_PAN_FAMILY_DECORATIVE ||
+        os2->panose[ASS_bFamilyType] == ASS_PAN_FAMILY_PICTORIAL)
+        family = ASS_FF_DECORATIVE;
+    else if (os2->panose[ASS_bFamilyType] == ASS_PAN_FAMILY_SCRIPT)
+        family = ASS_FF_SCRIPT;
+    else if (os2->panose[ASS_bSerifStyle] >= 2 && os2->panose[ASS_bSerifStyle] <= 10)
+        family = ASS_FF_ROMAN;
+    else if (os2->panose[ASS_bSerifStyle] >= 11 && os2->panose[ASS_bSerifStyle] <= 15)
+        family = ASS_FF_SWISS;
+    return family;
+}
+
+/**
+ * \brief Get the ASS_Family for truetype font.
+ **/
+ASS_Family ass_face_get_family_truetype(int guessed_charset, FT_Byte* panose)
+{
+    ASS_Family family = ASS_FF_DONTCARE;
+    if (guessed_charset == ASS_SHIFTJIS_CHARSET || guessed_charset == ASS_HANGUL_CHARSET) {
+        if (panose[ASS_bFamilyType] == ASS_PAN_FAMILY_SCRIPT)
+            family = ASS_FF_SCRIPT;
+        else if (panose[ASS_bSerifStyle] >= 2 && panose[ASS_bSerifStyle] <= 10)
+            family = ASS_FF_ROMAN;
+        else if (panose[ASS_bSerifStyle] >= 11 && panose[ASS_bSerifStyle] <= 15)
+            family = ASS_FF_MODERN;
+    } else if (panose[ASS_bFamilyType] == ASS_PAN_FAMILY_DECORATIVE)
+        family = ASS_FF_DECORATIVE;
+    else if (panose[ASS_bFamilyType] == ASS_PAN_FAMILY_SCRIPT)
+        family = ASS_FF_SCRIPT;
+    else if (panose[ASS_bProportion] == ASS_PAN_PROP_MONOSPACED)
+        family = ASS_FF_MODERN;
+    else if (panose[ASS_bSerifStyle] >= 2 && panose[ASS_bSerifStyle] <= 10)
+        family = ASS_FF_ROMAN;
+    else if (panose[ASS_bSerifStyle] >= 11 && panose[ASS_bSerifStyle] <= 15)
+        family = ASS_FF_SWISS;
+
+    return family;
 }
 
 /**

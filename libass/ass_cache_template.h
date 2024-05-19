@@ -54,6 +54,7 @@ START(font, ass_font_desc )
     STRING(family)
     GENERIC(unsigned, bold)
     GENERIC(unsigned, italic)
+    GENERIC(int, charset)
     GENERIC(int, vertical)  // @font vertical layout
 END(ASS_FontDesc)
 
