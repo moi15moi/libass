@@ -39,6 +39,7 @@ src_aarch64 = files(
 )
 src_fontconfig = files('ass_fontconfig.c')
 src_directwrite = files('ass_directwrite.c')
+src_gdi = files('ass_gdi.c')
 src_coretext = files('ass_coretext.c')
 
 libass_src = files(
@@ -76,6 +77,9 @@ if fontconfig
 endif
 if directwrite
     libass_src += src_directwrite
+endif
+if gdi
+    libass_src += src_gdi
 endif
 if coretext
     libass_src += src_coretext

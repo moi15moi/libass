@@ -211,6 +211,7 @@ int ass_library_version(void);
  * AUTODETECT use the first available font provider
  * CORETEXT force a CoreText based font provider (OS X only)
  * DIRECTWRITE force a DirectWrite based font provider (Microsoft Win32 only)
+ * GDI force a GDI based font provider (Microsoft Win32 only)
  * FONTCONFIG force a Fontconfig based font provider
  *
  * libass uses the best shaper available by default.
@@ -221,6 +222,7 @@ typedef enum {
     ASS_FONTPROVIDER_CORETEXT,
     ASS_FONTPROVIDER_FONTCONFIG,
     ASS_FONTPROVIDER_DIRECTWRITE,
+    ASS_FONTPROVIDER_GDI,
 } ASS_DefaultFontProvider;
 
 typedef enum {

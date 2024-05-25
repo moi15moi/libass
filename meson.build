@@ -199,6 +199,29 @@ if not get_option('directwrite').disabled()
     endif
 endif
 
+# GDI
+gdi = false
+if not get_option('gdi').disabled()
+    if cc.has_header('wingdi.h') and cc.has_header('usp10.h')
+        gdi = true
+        conf.set('CONFIG_GDI', 1)
+        # The order is important
+        # Quote from Microsoft:
+        # Starting with Windows 8: To maintain the ability to run on Windows 7,
+        # a module that uses Uniscribe must specify Usp10.lib
+        # before gdi32.lib in its library list.
+        deps += cc.find_library('usp10', required: true)
+        deps += cc.find_library('gdi32', required: true)
+        font_providers += ['GDI and Uniscribe (Win32)']
+    endif
+endif
+
+if get_option('gdi').enabled() and gdi == false
+    error(
+        'GDI support was requested, but it was not found.',
+    )
+endif
+
 if get_option('directwrite').enabled() and directwrite == false
     error(
         'DirectWrite support was requested, but it was not found.',
@@ -214,7 +237,7 @@ endif
 if get_option('require-system-font-provider')
     if font_providers.length() == 0
         error(
-            'Either DirectWrite (on Windows), CoreText (on OSX), or Fontconfig (Linux, ' +
+            'Either GDI (on Windows), DirectWrite (on Windows), CoreText (on OSX), or Fontconfig (Linux, ' +
             'other) is required. If you really want to compile without a system font ' +
             'provider, set -Drequire-system-font-provider=false',
         )

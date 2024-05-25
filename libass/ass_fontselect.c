@@ -44,6 +44,7 @@
 #include "ass_fontconfig.h"
 #include "ass_coretext.h"
 #include "ass_directwrite.h"
+#include "ass_gdi.h"
 #include "ass_font.h"
 #include "ass_string.h"
 
@@ -1055,6 +1056,9 @@ struct font_constructors font_constructors[] = {
         " (without GDI)"
 #endif
     },
+#endif
+#ifdef CONFIG_GDI
+    { ASS_FONTPROVIDER_GDI,             &ass_gdi_add_provider,          "gdi"},
 #endif
 #ifdef CONFIG_FONTCONFIG
     { ASS_FONTPROVIDER_FONTCONFIG,      &ass_fontconfig_add_provider,   "fontconfig"},
