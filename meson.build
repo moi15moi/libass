@@ -141,7 +141,7 @@ endif
 
 # CoreText
 coretext = false
-if not get_option('coretext').disabled()
+if get_option('coretext').enabled()
     appservices_dep = dependency(
         'appleframeworks',
         modules: ['ApplicationServices', 'CoreFoundation'],
@@ -181,7 +181,7 @@ endif
 
 # DirectWrite
 directwrite = false
-if not get_option('directwrite').disabled()
+if get_option('directwrite').enabled()
     if cc.has_header('windows.h', required: false)
         directwrite = true
         conf.set('CONFIG_DIRECTWRITE', 1)
@@ -244,7 +244,7 @@ else
     generic_cpu_family = cpu_family
 endif
 
-if not asm_option.disabled()
+if asm_option.enabled()
     if generic_cpu_family == 'x86'
         asm_is_nasm = add_languages(
             'nasm',
