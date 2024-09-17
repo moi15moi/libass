@@ -182,6 +182,8 @@ endif
 # DirectWrite
 directwrite = false
 if get_option('directwrite').enabled()
+    # NTDDI_VISTASP2 = 0x06000200
+    add_project_arguments('-D_WIN32_WINNT=0x06000200', language: 'c')
     if cc.has_header('windows.h', required: false)
         directwrite = true
         conf.set('CONFIG_DIRECTWRITE', 1)
@@ -201,6 +203,9 @@ if get_option('directwrite').enabled()
             font_providers += ['DirectWrite and GDI (Win32)']
         endif
     endif
+else
+    # _WIN32_WINNT_WINXP = 0x0501
+    add_project_arguments('-D_WIN32_WINNT=0x0501', language: 'c')
 endif
 
 if get_option('directwrite').enabled() and directwrite == false
