@@ -373,21 +373,49 @@ static void free_font_info(ASS_FontProviderMetaData *meta)
 /**
  * \brief Add a font to a font provider.
  * \param provider the font provider
- * \param meta basic metadata of the font
- * \param path path to the font file, or NULL
- * \param index face index inside the file (-1 to look up by PostScript name)
- * \param data private data for the font
- * \return success
+ * \param info The font to add to the database.
+ * \note After calling this function, **do not** call `ass_font_provider_free_fontinfo`
+ *       on the `info` parameter, as its contents have been copied.
  */
-bool
+void
 ass_font_provider_add_font(ASS_FontProvider *provider,
-                           ASS_FontProviderMetaData *meta, const char *path,
-                           int index, void *data)
+                           ASS_FontInfo* info)
+{
+    ASS_FontSelector *selector = provider->parent;
+
+    // check size
+    if (selector->n_font >= selector->alloc_font) {
+        selector->alloc_font = FFMAX(1, 2 * selector->alloc_font);
+        selector->font_infos = realloc(selector->font_infos,
+                selector->alloc_font * sizeof(ASS_FontInfo));
+    }
+
+    ASS_FontInfo* new_font_info = selector->font_infos + selector->n_font;
+    *new_font_info = *info;
+    selector->n_font++;
+}
+
+/**
+ * \brief Get the font info from a provider's font.
+ * \param provider the font provider
+ * \param meta the font metadata. See struct definition for more information.
+ * \param path absolute path to font, or NULL for memory-based fonts
+ * \param index index inside a font collection file
+ *              (-1 to look up by PostScript name)
+ * \param data private data for font callbacks
+ * \return A pointer to an ASS_FontInfo corresponding to the given parameters.
+ */
+ASS_FontInfo *
+ass_font_provider_get_font_info(ASS_FontProvider *provider,
+                                ASS_FontProviderMetaData *meta, const char *path,
+                                int index, void *data)
 {
     int i;
     ASS_FontSelector *selector = provider->parent;
-    ASS_FontInfo *info = NULL;
     ASS_FontProviderMetaData implicit_meta = {0};
+    ASS_FontInfo *info = calloc(1, sizeof(ASS_FontInfo));
+    if (!info)
+        goto error;
 
     if (!meta->n_family) {
         FT_Face face;
@@ -446,17 +474,6 @@ ass_font_provider_add_font(ASS_FontProvider *provider,
     printf("  index: %d\n", index);
 #endif
 
-    // check size
-    if (selector->n_font >= selector->alloc_font) {
-        selector->alloc_font = FFMAX(1, 2 * selector->alloc_font);
-        selector->font_infos = realloc(selector->font_infos,
-                selector->alloc_font * sizeof(ASS_FontInfo));
-    }
-
-    // copy over metadata
-    info = selector->font_infos + selector->n_font;
-    memset(info, 0, sizeof(ASS_FontInfo));
-
     // set uid
     info->uid = selector->uid++;
 
@@ -510,22 +527,22 @@ ass_font_provider_add_font(ASS_FontProvider *provider,
     info->priv  = data;
     info->provider = provider;
 
-    selector->n_font++;
-
     free_font_info(&implicit_meta);
     free(implicit_meta.postscript_name);
 
-    return true;
+    return info;
 
 error:
-    if (info)
+    if (info) {
         ass_font_provider_free_fontinfo(info);
+        free(info);
+    }
 
     free_font_info(&implicit_meta);
     free(implicit_meta.postscript_name);
     provider->funcs.destroy_font(data);
 
-    return false;
+    return NULL;
 }
 
 /**
@@ -997,11 +1014,15 @@ static void process_fontdata(ASS_FontProvider *priv, int idx)
         ft->face = face;
         ft->idx  = idx;
 
-        if (!ass_font_provider_add_font(priv, &info, NULL, face_index, ft)) {
+        ASS_FontInfo* font_info = ass_font_provider_get_font_info(priv, &info, NULL, face_index, ft);
+        if (!font_info) {
             ass_msg(library, MSGL_WARN, "Failed to add embedded font '%s'",
                     name);
             free(ft);
         }
+
+        ass_font_provider_add_font(priv, font_info);
+        free(font_info);
 
         free_font_info(&info);
     }
