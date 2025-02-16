@@ -598,9 +598,38 @@ static char *get_fallback(void *priv, ASS_Library *lib,
 #undef FONT_TYPE
 #undef FAMILY_AS_ARG
 
+static void update_best_matching_font(ASS_FontProvider *provider, ASS_FontProviderMetaData *meta,
+                                      FontPrivate *font_priv, ASS_FontProviderMetaData requested_font,
+                                      ASS_FontInfo **best_font_info, unsigned *best_font_score,
+                                      bool match_extended_family, unsigned bold,
+                                      unsigned italic, uint32_t code)
+{
+    ASS_FontInfo* info = ass_font_provider_get_font_info(provider, meta, NULL, 0, font_priv);
+    if (!info)
+        return;
+
+    bool name_match = false;
+    if (ass_update_best_matching_font(info, requested_font, match_extended_family, bold, italic, code, &name_match, best_font_score)) {
+        if (*best_font_info) {
+            ass_font_provider_free_fontinfo(*best_font_info);
+            ass_font_provider_destroy_private_fontinfo(*best_font_info);
+            free(*best_font_info);
+        }
+        *best_font_info = info;
+    } else {
+        ass_font_provider_free_fontinfo(info);
+        ass_font_provider_destroy_private_fontinfo(info);
+        free(info);
+    }
+}
+
 static void add_font_face(IDWriteFontFace *face, ASS_FontProvider *provider,
                           ASS_SharedHDC *shared_hdc,
-                          IDWriteFontCollection *system_font_coll)
+                          IDWriteFontCollection *system_font_coll,
+                          ASS_FontProviderMetaData requested_font,
+                          ASS_FontInfo **best_font_info, unsigned *best_font_score,
+                          bool match_extended_family, unsigned bold, unsigned italic,
+                          uint32_t code)
 {
     ASS_FontProviderMetaData meta = {0};
 
@@ -635,7 +664,9 @@ static void add_font_face(IDWriteFontFace *face, ASS_FontProvider *provider,
     font_priv->shared_hdc = hdc_retain(shared_hdc);
 #endif
 
-    ass_font_provider_add_font(provider, &meta, NULL, 0, font_priv);
+    update_best_matching_font(provider, &meta, font_priv, requested_font,
+                              best_font_info, best_font_score, match_extended_family,
+                              bold, italic, code);
 
 cleanup:
     free(meta.postscript_name);
@@ -652,6 +683,13 @@ struct font_enum_priv {
     IDWriteGdiInterop *gdi_interop;
     ASS_SharedHDC *shared_hdc;
     IDWriteFontCollection *system_font_coll;
+    ASS_FontProviderMetaData requested_font;
+    ASS_FontInfo *selected_font;
+    unsigned selected_font_score;
+    bool match_extended_family;
+    unsigned req_bold;
+    unsigned req_italic;
+    uint32_t req_codepoint;
 };
 
 /*
@@ -773,7 +811,11 @@ static int CALLBACK font_enum_proc(const ENUMLOGFONTW *lpelf,
         goto cleanup;
 
     add_font_face(face, priv->provider, priv->shared_hdc,
-                  priv->system_font_coll);
+                  priv->system_font_coll, priv->requested_font,
+                  &priv->selected_font, &priv->selected_font_score,
+                  priv->match_extended_family,
+                  priv->req_bold, priv->req_italic,
+                  priv->req_codepoint);
 
 cleanup:
     if (hFont)
@@ -843,10 +885,18 @@ cleanup:
 /*
  * When a new font name is requested, called to load that font from Windows
  */
-static void match_fonts(void *priv, ASS_Library *lib,
-                        ASS_FontProvider *provider, char *name)
+static ASS_FontInfo* match_fonts(void *priv, ASS_Library *lib,
+                                 ASS_FontProvider *provider, char *name,
+                                 bool match_extended_family,
+                                 unsigned bold, unsigned italic,
+                                 uint32_t code)
 {
     ProviderPrivate *provider_priv = (ProviderPrivate *)priv;
+    ASS_FontInfo *font_result = NULL;
+    ASS_FontProviderMetaData requested_font = {
+        .n_fullname = 1,
+        .fullnames  = (char **)&name,
+    };
     LOGFONTW lf = {0};
 
     // lfFaceName can hold up to LF_FACESIZE wchars; truncate longer names
@@ -857,7 +907,7 @@ static void match_fonts(void *priv, ASS_Library *lib,
 
     enum_priv.shared_hdc = calloc(1, sizeof(ASS_SharedHDC));
     if (!enum_priv.shared_hdc)
-        return;
+        return NULL;
 
     // Keep this HDC alive to keep the fonts alive. This seems to be necessary
     // on Windows 7, where the fonts can't be deleted as long as the DC lives
@@ -877,19 +927,26 @@ static void match_fonts(void *priv, ASS_Library *lib,
     HDC screen_dc = GetDC(NULL);
     if (!screen_dc) {
         free(enum_priv.shared_hdc);
-        return;
+        return NULL;
     }
     HDC hdc = CreateCompatibleDC(screen_dc);
     ReleaseDC(NULL, screen_dc);
     if (!hdc) {
         free(enum_priv.shared_hdc);
-        return;
+        return NULL;
     }
 
     enum_priv.provider = provider;
     enum_priv.gdi_interop = provider_priv->gdi_interop;
     enum_priv.shared_hdc->hdc = hdc;
     enum_priv.shared_hdc->ref_count = 1;
+    enum_priv.requested_font = requested_font;
+    enum_priv.selected_font = NULL;
+    enum_priv.selected_font_score = UINT_MAX;
+    enum_priv.match_extended_family = match_extended_family;
+    enum_priv.req_bold = bold;
+    enum_priv.req_italic = italic;
+    enum_priv.req_codepoint = code;
 
     enum_priv.system_font_coll = NULL;
     IDWriteFactory_GetSystemFontCollection(provider_priv->factory,
@@ -918,6 +975,8 @@ static void match_fonts(void *priv, ASS_Library *lib,
         IDWriteFontCollection_Release(enum_priv.system_font_coll);
 
     hdc_release(enum_priv.shared_hdc);
+
+    font_result = enum_priv.selected_font;
 #else
     HRESULT hr;
     IDWriteFactory3 *factory3;
@@ -1005,6 +1064,8 @@ static void match_fonts(void *priv, ASS_Library *lib,
         IDWriteFontFamily_Release(fontFamily);
     }
 #endif
+
+    return font_result;
 }
 
 static void get_substitutions(void *priv, const char *name,
