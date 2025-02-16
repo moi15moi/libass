@@ -413,9 +413,6 @@ ass_font_provider_get_font_info(ASS_FontProvider *provider,
     int i;
     ASS_FontSelector *selector = provider->parent;
     ASS_FontProviderMetaData implicit_meta = {0};
-    ASS_FontInfo *info = calloc(1, sizeof(ASS_FontInfo));
-    if (!info)
-        goto error;
 
     if (!meta->n_family) {
         FT_Face face;
@@ -473,6 +470,10 @@ ass_font_provider_get_font_info(ASS_FontProvider *provider,
     printf("  path: %s\n", path);
     printf("  index: %d\n", index);
 #endif
+
+    ASS_FontInfo *info = calloc(1, sizeof(ASS_FontInfo));
+    if (!info)
+        goto error;
 
     // set uid
     info->uid = selector->uid++;
