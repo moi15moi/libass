@@ -880,6 +880,7 @@ static char *select_font(ASS_FontSelector *priv,
     ASS_FontInfo *matched_font = NULL;
     char *result = NULL;
     bool name_match = false;
+    bool queried_via_provider = false;
 
     if (family == NULL)
         return NULL;
@@ -922,6 +923,8 @@ static char *select_font(ASS_FontSelector *priv,
             if (!matched_font)
                 break;
         }
+
+        queried_via_provider = true;
     }
 
     result = get_font_result(matched_font, index, postscript_name, uid, stream);
@@ -931,6 +934,11 @@ static char *select_font(ASS_FontSelector *priv,
         for (int i = 0; i < meta.n_fullname; i++)
             free(meta.fullnames[i]);
         free(meta.fullnames);
+    }
+
+    if (queried_via_provider && matched_font) {
+        ass_font_provider_free_fontinfo(matched_font);
+        free(matched_font);
     }
 
     return result;
