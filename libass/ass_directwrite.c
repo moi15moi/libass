@@ -506,8 +506,19 @@ cleanup:
     return mbName;
 }
 
-static char *get_fallback(void *priv, ASS_Library *lib,
-                          const char *base, uint32_t codepoint)
+#define FONT_TYPE IDWriteFontFace3
+#include "ass_directwrite_info_template.h"
+#undef FONT_TYPE
+
+#define FONT_TYPE IDWriteFont
+#define FAMILY_AS_ARG
+#include "ass_directwrite_info_template.h"
+#undef FONT_TYPE
+#undef FAMILY_AS_ARG
+
+static ASS_FontInfo *get_fallback(void *priv, ASS_Library *lib, ASS_FontProvider *provider,
+                                  const char *base, unsigned bold,
+                                  unsigned italic, uint32_t codepoint)
 {
     HRESULT hr;
     ProviderPrivate *provider_priv = (ProviderPrivate *)priv;
@@ -518,8 +529,9 @@ static char *get_fallback(void *priv, ASS_Library *lib,
 
     init_FallbackLogTextRenderer(&renderer, dw_factory);
 
+    DWRITE_FONT_STYLE font_style = italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL;
     hr = IDWriteFactory_CreateTextFormat(dw_factory, FALLBACK_DEFAULT_FONT, NULL,
-            DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE_NORMAL,
+            bold, font_style,
             DWRITE_FONT_STRETCH_NORMAL, 1.0f, L"", &text_format);
     if (FAILED(hr)) {
         return NULL;
@@ -563,40 +575,23 @@ static char *get_fallback(void *priv, ASS_Library *lib,
         }
     }
 
-    // Now, just extract the first family name
-    IDWriteLocalizedStrings *familyNames = NULL;
-    hr = IDWriteFont_GetInformationalStrings(font,
-            DWRITE_INFORMATIONAL_STRING_WIN32_FAMILY_NAMES,
-            &familyNames, &exists);
-    if (SUCCEEDED(hr) && !exists) {
-        IDWriteFontFamily *fontFamily = NULL;
-        hr = IDWriteFont_GetFontFamily(font, &fontFamily);
-        if (SUCCEEDED(hr)) {
-            hr = IDWriteFontFamily_GetFamilyNames(fontFamily, &familyNames);
-            IDWriteFontFamily_Release(fontFamily);
-        }
-    }
-    if (FAILED(hr)) {
+    ASS_FontProviderMetaData meta = {0};
+    bool success = get_font_info_IDWriteFont(font, NULL, &meta);
+    if (!success) {
         IDWriteFont_Release(font);
         return NULL;
     }
 
-    char *family = get_utf8_name(familyNames, 0);
+    FontPrivate *font_priv = calloc(1, sizeof(*font_priv));
+    if (!font_priv) {
+        IDWriteFont_Release(font);
+        return NULL;
+    }
+    font_priv->font = font;
 
-    IDWriteLocalizedStrings_Release(familyNames);
-    IDWriteFont_Release(font);
-    return family;
+    ASS_FontInfo* info = ass_font_provider_get_font_info(provider, &meta, NULL, 0, font_priv);
+    return info;
 }
-
-#define FONT_TYPE IDWriteFontFace3
-#include "ass_directwrite_info_template.h"
-#undef FONT_TYPE
-
-#define FONT_TYPE IDWriteFont
-#define FAMILY_AS_ARG
-#include "ass_directwrite_info_template.h"
-#undef FONT_TYPE
-#undef FAMILY_AS_ARG
 
 static void update_best_matching_font(ASS_FontProvider *provider, ASS_FontProviderMetaData *meta,
                                       FontPrivate *font_priv, ASS_FontProviderMetaData requested_font,

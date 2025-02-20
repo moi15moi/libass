@@ -1033,12 +1033,12 @@ char *ass_font_select(ASS_FontSelector *priv,
         const char *search_family = family;
         if (!search_family || !*search_family)
             search_family = "Arial";
-        char *fallback_family = default_provider->funcs.get_fallback(
-                default_provider->priv, priv->library, search_family, code);
+        ASS_FontInfo *fallback_family = default_provider->funcs.get_fallback(
+                default_provider->priv, priv->library, default_provider, search_family, bold, italic, code);
 
         if (fallback_family) {
-            res = select_font(priv, fallback_family, true, bold, italic,
-                    index, postscript_name, uid, data, code);
+            ass_font_provider_add_font(default_provider, fallback_family, false);
+            res = get_font_result(fallback_family, index, postscript_name, uid, data);
             free(fallback_family);
         }
     }

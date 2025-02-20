@@ -155,14 +155,19 @@ typedef void    (*SubstituteFontFunc)(void *priv, const char *name,
  *
  * \param priv font provider private data
  * \param lib ASS_Library instance
+ * \param provider font provider instance
  * \param family original font family name (try matching a similar font) (never NULL)
+ * \param bold The requested boldness level.
+ * \param italic The requested italic style.
  * \param codepoint Unicode codepoint (UTF-32)
- * \return output extended font family, allocated with malloc(), must be freed
- *         by caller.
+ * \return The font selected by the provider.
  */
-typedef char   *(*GetFallbackFunc)(void *priv,
+typedef ASS_FontInfo   *(*GetFallbackFunc)(void *priv,
                                    ASS_Library *lib,
+                                   ASS_FontProvider *provider,
                                    const char *family,
+                                   unsigned bold,
+                                   unsigned italic,
                                    uint32_t codepoint);
 
 typedef struct font_provider_funcs {
