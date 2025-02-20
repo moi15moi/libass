@@ -31,6 +31,7 @@
 #include <limits.h>
 #include <ft2build.h>
 #include <sys/types.h>
+#include <font_matcher.h>
 #include FT_FREETYPE_H
 #include FT_SFNT_NAMES_H
 #include FT_TRUETYPE_IDS_H
@@ -44,8 +45,10 @@
 #include "ass_fontconfig.h"
 #include "ass_coretext.h"
 #include "ass_directwrite.h"
+#include "ass_androidfonts.h"
 #include "ass_font.h"
 #include "ass_string.h"
+#include "ass_utils.h"
 
 #define ABS(x) ((x) < 0 ? -(x) : (x))
 #define MAX_FULLNAME 100
@@ -1052,6 +1055,9 @@ struct font_constructors font_constructors[] = {
         " (without GDI)"
 #endif
     },
+#endif
+#ifdef CONFIG_ANDROID
+    { ASS_FONTPROVIDER_ANDROIDFONTS,    &ass_android_add_provider, "androidfonts"},
 #endif
 #ifdef CONFIG_FONTCONFIG
     { ASS_FONTPROVIDER_FONTCONFIG,      &ass_fontconfig_add_provider,   "fontconfig"},

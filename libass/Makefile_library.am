@@ -64,6 +64,10 @@ if CORETEXT
 libass_libass_internal_la_SOURCES += libass/ass_coretext.h libass/ass_coretext.c
 endif
 
+if ANDROID
+libass_libass_internal_la_SOURCES += libass/ass_androidfonts.h libass/ass_androidfonts.c
+endif
+
 lib_LTLIBRARIES += libass/libass.la
 libass_libass_la_LIBADD = libass/libass_internal.la
 libass_libass_la_SOURCES =

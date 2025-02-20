@@ -33,7 +33,7 @@ AC_ARG_ENABLE([directwrite], AS_HELP_STRING([--disable-directwrite],
     [disable DirectWrite support (Windows only) @<:@default=check@:>@]))
 AC_ARG_ENABLE([coretext], AS_HELP_STRING([--disable-coretext],
     [disable Core Text support (Apple only) @<:@default=check@:>@]))
-AC_ARG_ENABLE([android-ndk], AS_HELP_STRING([--disable-android-ndk],
+AC_ARG_ENABLE([android], AS_HELP_STRING([--disable-android],
     [disable Android NDK support (Android only) @<:@default=check@:>@]))
 AC_ARG_ENABLE([libunibreak], AS_HELP_STRING([--disable-libunibreak],
     [disable libunibreak support @<:@default=check@:>@]))
@@ -236,15 +236,15 @@ AS_IF([test "x$enable_directwrite" != xno], [
 ])
 
 ### Android NDK
-AS_IF([test "x$enable_android_ndk" != xno], [
+AS_IF([test "x$enable_android" != xno], [
     PKG_CHECK_MODULES([ANDROID], [android], [
         CFLAGS="$CFLAGS $ANDROID_CFLAGS"
         LIBS="$LIBS $ANDROID_LIBS"
         AC_DEFINE(CONFIG_ANDROID, 1, [found android ndk via pkg-config])
-        android_ndk=true
+        android=true
     ], [
-        android_ndk=false
-        AS_IF([test "x$enable_android_ndk" = xyes], [
+        android=false
+        AS_IF([test "x$enable_android" = xyes], [
             AC_MSG_ERROR([Android ndk support was requested, but it was not found.])
         ])
     ])
@@ -255,7 +255,7 @@ AS_IF([test "x$enable_require_system_font_provider" != xno  dnl
         && test "x$fontconfig" != xtrue                     dnl
         && test "x$directwrite" != xtrue                    dnl
         && test "x$coretext" != xtrue                       dnl
-        && test "x$android_ndk" != xtrue                    ], [
+        && test "x$android" != xtrue                    ], [
     AC_MSG_ERROR(m4_text_wrap(m4_normalize([
             At least one of DirectWrite (Windows-exclusive),
             Core Text (Apple-exclusive), Android NDK (Android-exclusive),
@@ -412,7 +412,7 @@ AM_CONDITIONAL([ENABLE_CHECKASM], [test "x$can_asm" = xtrue && test "x$GCC" = xy
 AM_CONDITIONAL([FONTCONFIG], [test "x$fontconfig" = xtrue])
 AM_CONDITIONAL([CORETEXT], [test "x$coretext" = xtrue])
 AM_CONDITIONAL([DIRECTWRITE], [test "x$directwrite" = xtrue])
-AM_CONDITIONAL([ANDROID_NDK], [test "x$android_ndk" = xtrue])
+AM_CONDITIONAL([ANDROID], [test "x$android" = xtrue])
 
 ## Define C Macros not relating to libraries
 AM_COND_IF([ASM], [
