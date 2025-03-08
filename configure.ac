@@ -237,15 +237,30 @@ AS_IF([test "x$enable_directwrite" != xno], [
 
 ### Android NDK
 AS_IF([test "x$enable_android" != xno], [
-    PKG_CHECK_MODULES([ANDROID], [android], [
-        CFLAGS="$CFLAGS $ANDROID_CFLAGS"
-        LIBS="$LIBS $ANDROID_LIBS"
-        AC_DEFINE(CONFIG_ANDROID, 1, [found android ndk via pkg-config])
+    AC_MSG_CHECKING([for Android])
+    AC_COMPILE_IFELSE([
+        AC_LANG_PROGRAM([[#include <android/log.h>]], [[;]])
+    ], [
         android=true
+        AC_MSG_RESULT([yes])
+        AC_MSG_CHECKING([for Android NDK])
+        AC_COMPILE_IFELSE([
+            AC_LANG_PROGRAM([[#include <jni.h>]], [[;]])
+        ], [
+            AC_MSG_RESULT([yes])
+            AC_DEFINE(CONFIG_ANDROID, 1, [found Android NDK])
+        ], [
+            android=false
+            AC_MSG_RESULT([no])
+            AS_IF([test "x$enable_android" = xyes], [
+                AC_MSG_ERROR([Android NDK support was requested, but it was not found.])
+            ])
+        ])
     ], [
         android=false
+        AC_MSG_RESULT([no])
         AS_IF([test "x$enable_android" = xyes], [
-            AC_MSG_ERROR([Android ndk support was requested, but it was not found.])
+            AC_MSG_ERROR([Android support was requested, but it was not found.])
         ])
     ])
 ])
@@ -255,7 +270,7 @@ AS_IF([test "x$enable_require_system_font_provider" != xno  dnl
         && test "x$fontconfig" != xtrue                     dnl
         && test "x$directwrite" != xtrue                    dnl
         && test "x$coretext" != xtrue                       dnl
-        && test "x$android" != xtrue                    ], [
+        && test "x$android" != xtrue                        ], [
     AC_MSG_ERROR(m4_text_wrap(m4_normalize([
             At least one of DirectWrite (Windows-exclusive),
             Core Text (Apple-exclusive), Android NDK (Android-exclusive),

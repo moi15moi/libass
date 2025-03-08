@@ -40,6 +40,7 @@ src_aarch64 = files(
 src_fontconfig = files('ass_fontconfig.c')
 src_directwrite = files('ass_directwrite.c')
 src_coretext = files('ass_coretext.c')
+src_android = files('ass_androidfonts.c')
 
 libass_src = files(
     'c/c_be_blur.c',
@@ -79,6 +80,9 @@ if directwrite
 endif
 if coretext
     libass_src += src_coretext
+endif
+if android
+    libass_src += src_android
 endif
 
 if enable_asm

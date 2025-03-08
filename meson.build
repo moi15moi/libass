@@ -215,6 +215,30 @@ if not get_option('directwrite').disabled()
     endif
 endif
 
+# Android
+android = false
+if not get_option('android').disabled()
+    # Vérifier la présence de <android/log.h>
+    if cc.compiles('#include <android/log.h>\nint main() { return 0; }', name: 'Android log.h')
+        # Vérifier la présence de <jni.h>
+        if cc.compiles('#include <jni.h>\nint main() { return 0; }', name: 'Android jni.h')
+            android = true
+            conf.set('CONFIG_ANDROID', 1)  # Définir la macro CONFIG_ANDROID
+            message('Android NDK support found')
+        else
+            android = false
+            if get_option('android').enabled()
+                error('Android NDK support was requested, but <jni.h> was not found.')
+            endif
+        endif
+    else
+        android = false
+        if get_option('android').enabled()
+            error('Android support was requested, but <android/log.h> was not found.')
+        endif
+    endif
+endif
+
 if get_option('directwrite').enabled() and directwrite == false
     error(
         'DirectWrite support was requested, but it was not found.',
@@ -227,11 +251,18 @@ if get_option('coretext').enabled() and coretext == false
     )
 endif
 
+if get_option('android').enabled() and android == false
+    error(
+        'Android support was requested, but it was not found.',
+    )
+endif
+
 if get_option('require-system-font-provider')
     if font_providers.length() == 0
         error(
             'At least one of DirectWrite (Windows-exclusive), ' +
-            'Core Text (Apple-exclusive), or Fontconfig is required. ' +
+            'Core Text (Apple-exclusive), Android (Android-exclusive), ' +
+            'or Fontconfig is required. ' +
             'If you really want to compile without a system font ' +
             'provider, set -Drequire-system-font-provider=false',
         )

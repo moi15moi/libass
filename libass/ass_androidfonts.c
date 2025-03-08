@@ -18,11 +18,26 @@
 
 #include "config.h"
 #include "ass_compat.h"
-
-#include <font_matcher.h>
-#include <font.h>
-
 #include "ass_androidfonts.h"
+
+#ifdef CONFIG_ANDROID
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <android/api-level.h>
+#include <android/asset_manager.h>
+#include <android/font_matcher.h>
+#include <android/font.h>
+#include <android/asset_manager_jni.h>
+#include <jni.h>
+
+#include "ass_utils.h"
+#include "ass.h"
+#include "ass_library.h"
+#include "ass_fontselect.h"
+#include "ass_font.h"
+#include "ass_string.h"
 
 
 // TODO
@@ -110,3 +125,5 @@ ass_android_add_provider(ASS_Library *lib, ASS_FontSelector *selector,
 {
     return ass_font_provider_new(selector, &android_callbacks, NULL);
 }
+
+#endif

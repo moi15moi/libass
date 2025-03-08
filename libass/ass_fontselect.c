@@ -31,7 +31,7 @@
 #include <limits.h>
 #include <ft2build.h>
 #include <sys/types.h>
-#include <font_matcher.h>
+// #include <android/font_matcher.h>
 #include FT_FREETYPE_H
 #include FT_SFNT_NAMES_H
 #include FT_TRUETYPE_IDS_H
@@ -1057,7 +1057,7 @@ struct font_constructors font_constructors[] = {
     },
 #endif
 #ifdef CONFIG_ANDROID
-    { ASS_FONTPROVIDER_ANDROIDFONTS,    &ass_android_add_provider, "androidfonts"},
+    { ASS_FONTPROVIDER_ANDROID,    &ass_android_add_provider, "android"},
 #endif
 #ifdef CONFIG_FONTCONFIG
     { ASS_FONTPROVIDER_FONTCONFIG,      &ass_fontconfig_add_provider,   "fontconfig"},

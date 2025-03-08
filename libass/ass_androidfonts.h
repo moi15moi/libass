@@ -15,12 +15,12 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-
-#include "ass_types.h"
-#include "ass_fontselect.h"
-
 #ifndef ASS_ANDROIDFONTS_H
 #define ASS_ANDROIDFONTS_H
+
+#include "ass.h"
+#include "ass_types.h"
+#include "ass_fontselect.h"
 
 #ifdef CONFIG_ANDROID
 
