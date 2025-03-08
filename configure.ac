@@ -239,7 +239,7 @@ AS_IF([test "x$enable_directwrite" != xno], [
 AS_IF([test "x$enable_android" != xno], [
     AC_MSG_CHECKING([for Android])
     AC_COMPILE_IFELSE([
-        AC_LANG_PROGRAM([[#include <android/log.h>]], [[;]])
+        AC_LANG_PROGRAM([[#include <android/font.h>]], [[;]])
     ], [
         android=true
         AC_MSG_RESULT([yes])
@@ -264,6 +264,10 @@ AS_IF([test "x$enable_android" != xno], [
         ])
     ])
 ])
+
+if test x$android = xtrue; then
+	pkg_libs="$pkg_libs -landroid"
+fi
 
 ## Require at least one system font provider by default
 AS_IF([test "x$enable_require_system_font_provider" != xno  dnl
