@@ -101,7 +101,7 @@ static char *get_fallback(void *priv, ASS_Library *lib,
                           const char *family, uint32_t codepoint)
 {
     // TODO
-    return "Roboto";
+    return NULL;
 }
 
 static void get_substitutions(void *priv, const char *name,
