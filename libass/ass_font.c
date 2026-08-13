@@ -247,7 +247,7 @@ void ass_charmap_magic(ASS_Library *library, FT_Face face)
     }
 }
 
-static uint32_t convert_unicode_to_ms_symbol(FT_Face face, uint32_t symbol)
+static bool convert_unicode_to_legacy_symbol(FT_Face face, uint32_t symbol, uint32_t *legacy_symbol)
 {
     TT_OS2 *os2 = FT_Get_Sfnt_Table(face, FT_SFNT_OS2);
 
@@ -256,11 +256,24 @@ static uint32_t convert_unicode_to_ms_symbol(FT_Face face, uint32_t symbol)
         int ARABIC_CHARSET_SIMPLIFIED  = 178;
         int ARABIC_CHARSET_TRADITIONAL = 179;
         uint8_t charset = (os2->fsSelection >> 8) & 0xFF;
-        if (charset == ARABIC_CHARSET_SIMPLIFIED)
-            return ass_font_charmap_arabic_simplified(symbol);
-        if (charset == ARABIC_CHARSET_TRADITIONAL)
-            return ass_font_charmap_arabic_traditional(symbol);
+        if (charset == ARABIC_CHARSET_SIMPLIFIED) {
+            *legacy_symbol = ass_font_charmap_arabic_simplified(symbol);
+            return true;
+        }
+        if (charset == ARABIC_CHARSET_TRADITIONAL) {
+            *legacy_symbol = ass_font_charmap_arabic_traditional(symbol);
+            return true;
+        }
     }
+
+    return false;
+}
+
+static uint32_t convert_unicode_to_ms_symbol(FT_Face face, uint32_t symbol)
+{
+    uint32_t legacy_symbol;
+    if (convert_unicode_to_legacy_symbol(face, symbol, &legacy_symbol))
+        return legacy_symbol;
 
     // GDI only supports cmap format 4 for symbol fonts
     // GDI reads the cmap's first segment startCount and
@@ -286,6 +299,7 @@ static uint32_t convert_unicode_to_ms_symbol(FT_Face face, uint32_t symbol)
             break;
     }
 
+    TT_OS2 *os2 = FT_Get_Sfnt_Table(face, FT_SFNT_OS2);
     bool is_symbol_glyph_set = (offset) || (os2 &&
                     os2->panose[0] == 5 && /* PAN_FAMILY_PICTORIAL */ 
                     (os2->fsSelection & 0xFF) == 0 /* ANSI_CHARSET */);
@@ -316,14 +330,20 @@ uint32_t ass_font_index_magic(FT_Face face, uint32_t symbol)
         return symbol;
 
     if (face->charmap->platform_id == TT_PLATFORM_MICROSOFT) {
-        switch (face->charmap->encoding) {
-        case FT_ENCODING_MS_SYMBOL:
+        switch (face->charmap->encoding_id) {
+        case TT_MS_ID_SYMBOL_CS:
             return convert_unicode_to_ms_symbol(face, symbol);
-        case FT_ENCODING_MS_SJIS:
-        case FT_ENCODING_MS_GB2312:
-        case FT_ENCODING_MS_BIG5:
-        case FT_ENCODING_MS_WANSUNG:
-        case FT_ENCODING_MS_JOHAB:
+        case TT_MS_ID_UNICODE_CS: {
+            uint32_t legacy_symbol;
+            if (convert_unicode_to_legacy_symbol(face, symbol, &legacy_symbol))
+                return legacy_symbol;
+            return symbol;
+        }
+        case TT_MS_ID_SJIS:
+        case TT_MS_ID_GB2312:
+        case TT_MS_ID_BIG_5:
+        case TT_MS_ID_WANSUNG:
+        case TT_MS_ID_JOHAB:
             return convert_unicode_to_mb(face->charmap->encoding, symbol);
         default:
             return symbol;
