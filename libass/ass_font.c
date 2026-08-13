@@ -247,6 +247,64 @@ void ass_charmap_magic(ASS_Library *library, FT_Face face)
     }
 }
 
+static uint32_t convert_unicode_to_ms_symbol(FT_Face face, uint32_t symbol)
+{
+    TT_OS2 *os2 = FT_Get_Sfnt_Table(face, FT_SFNT_OS2);
+
+    if (os2) {
+        // See: https://learn.microsoft.com/en-us/typography/legacy/legacy_arabic_fonts
+        int ARABIC_CHARSET_SIMPLIFIED  = 178;
+        int ARABIC_CHARSET_TRADITIONAL = 179;
+        uint8_t charset = (os2->fsSelection >> 8) & 0xFF;
+        if (charset == ARABIC_CHARSET_SIMPLIFIED)
+            return ass_font_charmap_arabic_simplified(symbol);
+        if (charset == ARABIC_CHARSET_TRADITIONAL)
+            return ass_font_charmap_arabic_traditional(symbol);
+    }
+
+    // GDI only supports cmap format 4 for symbol fonts
+    // GDI reads the cmap's first segment startCount and
+    // uses it to know what is the first character.
+    // FT_Get_First_Char() is NOT exactly equivalent,
+    // but for well-formatted cmap, it is.
+    FT_UInt gindex;
+    FT_ULong first_char = FT_Get_First_Char(face, &gindex);
+
+    uint32_t offset;
+    switch (first_char & 0xFF00) {
+        case 0xF000:
+            offset = 0xF000;
+            break;
+
+        case 0xE000: // EUDC fonts
+        case 0x0000:
+            offset = 0;
+            break;
+
+        default:
+            offset = (uint32_t) first_char - 0x20;
+            break;
+    }
+
+    bool is_symbol_glyph_set = (offset) || (os2 &&
+                    os2->panose[0] == 5 && /* PAN_FAMILY_PICTORIAL */ 
+                    (os2->fsSelection & 0xFF) == 0 /* ANSI_CHARSET */);
+
+    if (!is_symbol_glyph_set)
+        return symbol;
+
+    if (symbol <= 0xFF)
+        // TODO: Use the codepage of the language track: https://github.com/libass/libass/issues/319#issuecomment-1457223424
+        // GDI use the codepage of the system to get the glyph id.
+        // There is an exception to that.
+        // If the system code page is 932, 936, 949, or 950, it will actually use 1252.
+        return offset + symbol;
+    else if (symbol >= 0xF020 && symbol <= 0xF0FF)
+        return offset + (symbol & 0xFF);
+
+    return 0;
+}
+
 /**
  * Adjust char index if the charmap is weird
  * (currently all non-Unicode Microsoft cmap)
@@ -259,62 +317,8 @@ uint32_t ass_font_index_magic(FT_Face face, uint32_t symbol)
 
     if (face->charmap->platform_id == TT_PLATFORM_MICROSOFT) {
         switch (face->charmap->encoding) {
-        case FT_ENCODING_MS_SYMBOL: {
-            TT_OS2 *os2 = FT_Get_Sfnt_Table(face, FT_SFNT_OS2);
-
-            if (os2) {
-                // See: https://learn.microsoft.com/en-us/typography/legacy/legacy_arabic_fonts
-                int ARABIC_CHARSET_SIMPLIFIED  = 178;
-                int ARABIC_CHARSET_TRADITIONAL = 179;
-                uint8_t charset = (os2->fsSelection >> 8) & 0xFF;
-                if (charset == ARABIC_CHARSET_SIMPLIFIED)
-                    return ass_font_charmap_arabic_simplified(symbol);
-                if (charset == ARABIC_CHARSET_TRADITIONAL)
-                    return ass_font_charmap_arabic_traditional(symbol);
-            }
-
-            // GDI only supports cmap format 4 for symbol fonts
-            // GDI reads the cmap's first segment startCount and
-            // uses it to know what is the first character.
-            // FT_Get_First_Char() is NOT exactly equivalent,
-            // but for well-formatted cmap, it is.
-            FT_UInt gindex;
-            FT_ULong first_char = FT_Get_First_Char(face, &gindex);
-
-            uint32_t offset;
-            switch (first_char & 0xFF00) {
-                case 0xF000:
-                    offset = 0xF000;
-                    break;
-
-                case 0xE000: // EUDC fonts
-                case 0x0000:
-                    offset = 0;
-                    break;
-
-                default:
-                    offset = (uint32_t) first_char - 0x20;
-                    break;
-            }
-
-            bool is_symbol_glyph_set = (offset) || (os2 &&
-                            os2->panose[0] == 5 && /* PAN_FAMILY_PICTORIAL */ 
-                            (os2->fsSelection & 0xFF) == 0 /* ANSI_CHARSET */);
-
-            if (!is_symbol_glyph_set)
-                return symbol;
-
-            if (symbol <= 0xFF)
-                // TODO: Use the codepage of the language track: https://github.com/libass/libass/issues/319#issuecomment-1457223424
-                // GDI use the codepage of the system to get the glyph id.
-                // There is an exception to that.
-                // If the system code page is 932, 936, 949, or 950, it will actually use 1252.
-                return offset + symbol;
-            else if (symbol >= 0xF020 && symbol <= 0xF0FF)
-                return offset + (symbol & 0xFF);
-
-            return 0;
-        }
+        case FT_ENCODING_MS_SYMBOL:
+            return convert_unicode_to_ms_symbol(face, symbol);
         case FT_ENCODING_MS_SJIS:
         case FT_ENCODING_MS_GB2312:
         case FT_ENCODING_MS_BIG5:
