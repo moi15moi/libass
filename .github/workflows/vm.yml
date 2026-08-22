@@ -80,7 +80,8 @@ jobs:
 
     defaults:
       run:
-        shell: cpa.sh {0}
+        # Avoid syncing after each step, we only need an initial sync for repos
+        shell: cpa.sh {0} --sync-files none
 
     steps:
       # Available core count changes on runner type and over time, but GHA
@@ -119,12 +120,7 @@ jobs:
           operating_system: ${{ matrix.os_image }}
           version: ${{ matrix.os_version }}
           environment_variables: ASAN_OPTIONS AUTOCONF_VERSION AUTOMAKE_VERSION
-          # Avoid syncing after each step, we only need an initial sync for repos
-          sync_files: false
-
-      - name: Sync Files to VM
-        shell: bash
-        run: cpa.sh --sync-files runner-to-vm
+          sync_files: runner-to-vm
 
       - name: Install Packages
         run: |
